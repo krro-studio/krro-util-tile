@@ -1,9 +1,14 @@
 package top.kzre.krro.util.tile;
 
+import java.lang.ref.WeakReference;
+
 public class AbstractTile extends Tile {
     private final int tx, ty;
     private volatile TileData data;
-    private volatile  TiledCanvas canvas;
+    /**
+     * 弱引用，TiledCanvas 是唯一所有者
+     */
+    private volatile WeakReference<TiledCanvas> canvasRef;
 
     /**
      * 构造 Tile，直接持有传入的 data（假设 data 已经包含初始引用）。
@@ -141,19 +146,26 @@ public class AbstractTile extends Tile {
         if (canvas == null) {
             throw new IllegalArgumentException("canvas must not be null");
         }
-
-        TiledCanvas c = this.canvas;
-        if (c != null){
+        if (this.canvasRef != null) {
             throw new IllegalStateException("canvas already exists");
         }
-        this.canvas = canvas;
+        this.canvasRef = new WeakReference<>(canvas);
+    }
+
+    /**
+     * 返回当前所属画布；画布已被 GC 回收时返回 null。
+     * 包内可见，供 {@link #isValid()} 及将来可能的子类使用。
+     */
+    TiledCanvas ownerCanvas() {
+        WeakReference<TiledCanvas> ref = this.canvasRef;
+        return ref == null ? null : ref.get();
     }
 
     @Override
     public boolean isValid() {
-        return this.canvas != null && !canvas.isClosed();
+        TiledCanvas c = ownerCanvas();
+        return c != null && !c.isClosed();
     }
-
     /**
      * 替换当前数据（用于共享、或存储设施更新）。
      *

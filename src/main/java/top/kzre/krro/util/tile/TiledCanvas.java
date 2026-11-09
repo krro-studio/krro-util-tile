@@ -104,6 +104,7 @@ public final class TiledCanvas implements Canvas, AutoCloseable {
     private volatile boolean closed = false;
 
     private final TileFactory tileFactory;
+    private final TiledCanvasCleaner.Registration registration;
 
     // ---------- 构造器 ----------
 
@@ -141,6 +142,7 @@ public final class TiledCanvas implements Canvas, AutoCloseable {
         this.tileSize     = tileSize;
         this.channels     = defaultPixel.length;
         this.tiles        = new ConcurrentHashMap<>();
+        this.registration = TiledCanvasCleaner.register(this, this.tiles);
         this.defaultPixel = defaultPixel.clone();
         this.minTileX     = Integer.MAX_VALUE;
         this.maxTileX     = Integer.MIN_VALUE;
@@ -998,22 +1000,16 @@ public final class TiledCanvas implements Canvas, AutoCloseable {
     }
 
     @Override
-    public void close() throws Exception {
+    public void close() {
         if (closed) return;                        // 快速路径——无锁
         synchronized (lock) {
             if (closed) return;                    // 双检——幂等
             closed = true;                         // 先置标志——后续写操作立即拒绝
 
-            // ── 释放所有瓦片数据——逐个捕获
-            for (Map.Entry<Long, Tile> entry : tiles.entrySet()) {
-                try {
-                    entry.getValue().getDataRef().release();
-                } catch (Throwable ignored) {
-                }
-            }
-            tiles.clear();
+            // 释放所有瓦片数据（cleaner 线程走同一路径，由 done 保证只执行一次）
+            registration.cleanup();
 
-            // ── 重置范围
+            // extent 重置（cleaner 不关心这个，只在主动 close 时需要）
             minTileX = Integer.MAX_VALUE;
             maxTileX = Integer.MIN_VALUE;
             minTileY = Integer.MAX_VALUE;
