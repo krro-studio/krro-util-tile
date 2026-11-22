@@ -26,8 +26,22 @@ public final class TiledCanvas implements Canvas, AutoCloseable {
     // 内部锁
     private final Object lock = new Object();
 
+    @Deprecated
     public static long pack(int tx, int ty) {
         return ((long) tx << 32) | (ty & 0xFFFFFFFFL);
+    }
+
+    private static final LongObjectMap<Long> tileKeyMap = new LongObjectMap<>();
+
+    public static Long t(int tx, int ty) {
+        long k = ((long) tx << 32) | (ty & 0xFFFFFFFFL);
+        Long cached = tileKeyMap.get(k);
+        if (cached != null) {
+            return cached;
+        }
+        Long boxed = k;
+        Long existing = tileKeyMap.putIfAbsent(k, boxed);
+        return existing != null ? existing : boxed;
     }
 
     public static int unpackTx(long key) {
@@ -994,6 +1008,47 @@ public final class TiledCanvas implements Canvas, AutoCloseable {
             synchronized (lock) {
                 recomputeExtent();
             }
+        }
+
+        return this;
+    }
+
+    public TiledCanvas keepAabb(double minX, double minY, double maxX, double maxY) {
+        checkWritable();
+
+        if (minX > maxX || minY > maxY) {
+            clear();
+            return this;
+        }
+
+        int minTx = tile((int) Math.floor(minX), tileSize);
+        int maxTx = tile((int) Math.floor(maxX), tileSize);
+        int minTy = tile((int) Math.floor(minY), tileSize);
+        int maxTy = tile((int) Math.floor(maxY), tileSize);
+
+        // 收集不在 AABB 范围内的 key
+        List<Long> toRemove = new ArrayList<>();
+        for (Long key : tiles.keySet()) {
+            int tx = unpackTx(key);
+            int ty = unpackTy(key);
+            if (tx < minTx || tx > maxTx || ty < minTy || ty > maxTy) {
+                toRemove.add(key);
+            }
+        }
+
+        if (toRemove.isEmpty()) {
+            return this; // 没有要删的，直接返回
+        }
+
+        for (Long key : toRemove) {
+            Tile removed = tiles.remove(key);
+            if (removed != null) {
+                removed.getDataRef().release();
+            }
+        }
+
+        synchronized (lock) {
+            recomputeExtent();
         }
 
         return this;
